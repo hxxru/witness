@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { tuning } from '../ui/debug-panel.js';
 
 export async function loadConstellationData(url = '/data/constellations.json') {
   const response = await fetch(url);
@@ -62,7 +63,7 @@ export function createConstellationLines(scene, constellationData, starData) {
   const material = new THREE.LineBasicMaterial({
     color: 0xbfd7ff,
     transparent: true,
-    opacity: 0.48,
+    opacity: tuning.constellationLines.opacity,
     toneMapped: false,
   });
 
@@ -113,4 +114,9 @@ export function updateConstellationPositions(constellationLines, starField, lst,
 export function toggleConstellationLines(constellationLines) {
   constellationLines.lines.visible = !constellationLines.lines.visible;
   return constellationLines.lines.visible;
+}
+
+export function updateConstellationVisibility(constellationLines, starVisibility) {
+  constellationLines.lines.material.opacity = tuning.constellationLines.opacity * starVisibility;
+  constellationLines.lines.material.linewidth = tuning.constellationLines.linewidth;
 }

@@ -6,7 +6,7 @@
 witness/
 ├── public/
 │   ├── data/
-│   │   ├── bsc5.json              # star catalog (top ~500 by vmag)
+│   │   ├── bsc5.json              # star catalog (top ~2000 by vmag)
 │   │   ├── stellarium-western.json# raw Stellarium western/index.json input
 │   │   ├── constellations.json    # processed constellation lines (HIP ID pairs)
 │   │   ├── star-names.json        # common star names keyed by HIP ID
@@ -20,8 +20,8 @@ witness/
 │   │   ├── coordinates.js         # all astronomical coordinate math
 │   │   ├── stars.js               # star field rendering (instanced mesh)
 │   │   ├── constellations.js      # constellation line rendering
-│   │   ├── planets.js             # VSOP87 planet positions + rendering
-│   │   ├── sun-moon.js            # sun/moon positions + rendering
+│   │   ├── planets.js             # astronomy-engine planet positions + rendering
+│   │   ├── sun-moon.js            # astronomy-engine sun/moon positions + rendering
 │   │   ├── atmosphere.js          # sky gradient shader
 │   │   └── milkyway.js            # milky way band (post-MVP, stub for now)
 │   ├── world/
@@ -71,7 +71,7 @@ each module has a single responsibility. modules communicate through well-define
 - `updateStarVisibility(starField, sunAltitude)` — fade stars based on sky brightness
 - `setStarFieldVisible(starField, visible)` — show/hide
 
-**depends on:** `coordinates.js` for math, star data from `public/data/bsc5.json`.
+**depends on:** `coordinates.js` for math, star data from `public/data/bsc5.json` (currently the brightest ~2000 HYG-derived stars).
 
 ### `src/sky/constellations.js`
 **owns:** loading processed constellation data, creating line segments, updating positions, skipping missing HIP endpoints gracefully.
@@ -84,22 +84,22 @@ each module has a single responsibility. modules communicate through well-define
 when a segment endpoint is missing from the filtered BSC subset, skip that segment and log the constellation as incomplete instead of failing the whole overlay.
 
 ### `src/sky/planets.js`
-**owns:** VSOP87 computation, planet rendering.
+**owns:** planet position lookup via `astronomy-engine`, planet rendering, and permanent label placement.
 **exports:**
 - `createPlanets(scene)` → planets object
-- `updatePlanetPositions(planets, jd, lst, latitude)` — recompute from VSOP87
+- `updatePlanetPositions(planets, jd, lst, latitude)` — recompute positions from `astronomy-engine`
 
-**depends on:** `coordinates.js` for ecliptic→equatorial→horizontal pipeline.
+**depends on:** `astronomy-engine` for topocentric equatorial coordinates, `coordinates.js` for equatorial→horizontal→cartesian transforms.
 
 ### `src/sky/sun-moon.js`
-**owns:** sun position (from VSOP87 earth), moon position (meeus ch. 47), phase computation, sun/moon rendering.
+**owns:** sun/moon position lookup via `astronomy-engine`, moon phase shading, sun/moon rendering.
 **exports:**
 - `createSunMoon(scene)` → sun/moon object
 - `updateSunMoon(sunMoon, jd, lst, latitude)` — recompute positions
 - `getSunAltitude(sunMoon)` → degrees (used by atmosphere, star visibility, terrain lighting)
 - `getMoonPhase(sunMoon)` → `{illuminatedFraction, phaseAngle}`
 
-**depends on:** `coordinates.js`.
+**depends on:** `astronomy-engine` for equatorial positions and illumination data, `coordinates.js` for equatorial→horizontal→cartesian transforms.
 
 ### `src/sky/atmosphere.js`
 **owns:** sky gradient rendering.
@@ -130,6 +130,7 @@ when a segment endpoint is missing from the filtered BSC subset, skip that segme
 **exports:**
 - `createTrees(scene, terrain, seed)` → trees object
 - `regenerateTrees(trees, terrain, seed)` — rebuild on teleport
+- `updateTreesLighting(trees, ambientLevel)` — tint toward silhouettes at night
 
 **depends on:** `terrain.js` for height sampling (trees sit on terrain surface).
 
@@ -271,14 +272,13 @@ the raw Stellarium format stores each constellation `lines` entry as a polyline 
 **runtime:**
 - three.js — 3D rendering
 - simplex-noise — terrain generation
+- astronomy-engine — planet, sun, and moon ephemerides for the MVP
 - (post-processing from three.js examples: EffectComposer, UnrealBloomPass, RenderPass)
 
 **build:**
 - vite — dev server + bundler
 
-**no other runtime dependencies.** coordinate transforms, VSOP87, and all astronomical math are implemented from scratch following `docs/astronomy.md`. this is a deliberate choice — the astronomy is the core of the project and should be fully understood and controlled.
-
-if astronomy-engine is adopted later, it would replace parts of `coordinates.js`, `planets.js`, and `sun-moon.js`. this decision is deferred.
+coordinate transforms and precession are implemented from scratch following `docs/astronomy.md`. `astronomy-engine` is the accepted MVP dependency for planet, sun, and moon positions; a future from-scratch replacement remains optional.
 
 ## conventions
 

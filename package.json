@@ -8,11 +8,13 @@
     "build": "vite build",
     "preview": "vite preview",
     "preprocess:constellations": "node scripts/preprocess-constellations.mjs",
-    "preprocess:stars": "node scripts/preprocess-stars.mjs"
+    "preprocess:stars": "node scripts/preprocess-stars.mjs",
+    "generate:land-mask": "node scripts/generate-land-mask.mjs"
   },
   "dependencies": {
-    "three": "^0.170.0",
-    "simplex-noise": "^4.0.3"
+    "astronomy-engine": "^2.1.19",
+    "simplex-noise": "^4.0.3",
+    "three": "^0.170.0"
   },
   "devDependencies": {
     "vite": "^6.0.0"

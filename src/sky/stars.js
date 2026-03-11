@@ -1,11 +1,9 @@
 import * as THREE from 'three';
 
 import { equatorialToHorizontal, horizontalToCartesian, precessRADec } from './coordinates.js';
+import { tuning } from '../ui/debug-panel.js';
 
 const STAR_RADIUS = 1000;
-const BASE_STAR_SIZE = 1.6;
-const LIMITING_MAGNITUDE = 4.5;
-const SIZE_SCALE_FACTOR = 0.35;
 const MIN_STAR_SIZE = 1.2;
 const MAX_STAR_SIZE = 12;
 const POLARIS_HIP = 11767;
@@ -22,6 +20,15 @@ const COLOR_STOPS = [
 
 function clamp(value, minimum, maximum) {
   return Math.min(Math.max(value, minimum), maximum);
+}
+
+function smoothstep(edge0, edge1, value) {
+  const t = clamp((value - edge0) / (edge1 - edge0), 0, 1);
+  return t * t * (3 - 2 * t);
+}
+
+export function starVisibilityForSunAltitude(sunAltitude) {
+  return 1 - smoothstep(-18, -6, sunAltitude);
 }
 
 export function colorForBV(bv) {
@@ -46,11 +53,12 @@ export function colorForBV(bv) {
 
 export function sizeForMagnitude(vmag) {
   if (!Number.isFinite(vmag)) {
-    return BASE_STAR_SIZE;
+    return tuning.stars.baseSize;
   }
 
   const size =
-    BASE_STAR_SIZE * Math.pow(2.512, (LIMITING_MAGNITUDE - vmag) * SIZE_SCALE_FACTOR);
+    tuning.stars.baseSize *
+    Math.pow(2.512, (tuning.stars.limitingMagnitude - vmag) * tuning.stars.scaleFactor);
 
   return clamp(size, MIN_STAR_SIZE, MAX_STAR_SIZE);
 }
@@ -85,6 +93,8 @@ export function createStarField(scene, starData) {
   const geometry = new THREE.IcosahedronGeometry(1, 0);
   const material = new THREE.MeshBasicMaterial({
     color: 0xffffff,
+    transparent: true,
+    opacity: 1,
     depthWrite: false,
     toneMapped: false,
   });
@@ -94,7 +104,6 @@ export function createStarField(scene, starData) {
 
     return {
       ...star,
-      size: sizeForMagnitude(star.vmag),
       color: color.multiplyScalar(brightness),
     };
   });
@@ -122,6 +131,7 @@ export function createStarField(scene, starData) {
     positions: Array.from({ length: stars.length }, () => new THREE.Vector3()),
     observerPosition: new THREE.Vector3(),
     dummy: new THREE.Object3D(),
+    renderedCount: 0,
   };
 }
 
@@ -142,30 +152,40 @@ export function updateStarPositions(starField, lst, latitude, T, observerPositio
     starField.lastPrecessionT = T;
   }
 
+  let renderedCount = 0;
+
   for (let index = 0; index < starField.stars.length; index += 1) {
     const star = starField.stars[index];
     const precessed = starField.precessedEquatorial[index];
     const horizontal = equatorialToHorizontal(precessed.ra, precessed.dec, lst, latitude);
     const cartesian = horizontalToCartesian(horizontal.alt, horizontal.az, starField.radius);
     const worldPosition = starField.positions[index];
+    const visible = !Number.isFinite(star.vmag) || star.vmag <= tuning.stars.limitingMagnitude;
 
     worldPosition.set(cartesian.x, cartesian.y, cartesian.z).add(starField.observerPosition);
 
     const matrix = buildInstanceMatrix(
       worldPosition,
-      star.size,
+      visible ? sizeForMagnitude(star.vmag) : 0,
       starField.observerPosition,
       starField.dummy
     );
 
     starField.mesh.setMatrixAt(index, matrix);
+    if (visible) {
+      renderedCount += 1;
+    }
   }
 
   starField.mesh.instanceMatrix.needsUpdate = true;
+  starField.renderedCount = renderedCount;
+  tuning.stars.renderedCount = renderedCount;
 }
 
 export function updateStarVisibility(starField, sunAltitude) {
-  starField.mesh.visible = sunAltitude <= -6;
+  const visibility = starVisibilityForSunAltitude(sunAltitude);
+  starField.mesh.visible = visibility > 0.002;
+  starField.mesh.material.opacity = visibility;
 }
 
 export function setStarFieldVisible(starField, visible) {

@@ -54,6 +54,20 @@ LST = GMST + observer_longitude    (east positive)
 
 reduce to [0°, 360°).
 
+### time scale distinctions (TODO)
+
+years use astronomical numbering: 1 BCE = year 0, 2 BCE = year -1, etc.
+
+strictly, the time scales used by the different parts of the pipeline are not identical:
+
+- GMST/LST should use JD based on UT1
+- precession and obliquity should use TT
+- VSOP87 and other planetary theories are usually expressed in TDB
+
+the MVP currently uses a single undifferentiated JD everywhere, effectively treating it like UTC. for modern-era naked-eye use this is acceptable: the resulting error is on the order of ~69 seconds, which is visually negligible. but ΔT grows large in deep time; by 3000 BCE it is roughly ~17 hours, which will visibly affect sidereal rotation and the apparent timing of risings and settings.
+
+a future implementation should add a ΔT lookup table or fitted model (for example from meeus appendices or USNO tabulated values) so the engine can convert explicitly between civil time, UT1, TT, and TDB. this is deferred for now.
+
 ## 2. coordinate transforms
 
 ### equatorial → horizontal
@@ -110,20 +124,15 @@ z = 0.6406161° * T + 0.0003041° * T² + 0.0000051° * T³
 to precess RA/Dec from J2000 to date T:
 
 ```
-# convert J2000 RA/Dec to unit vector
-x₀ = cos(δ₀) * cos(α₀)
-y₀ = cos(δ₀) * sin(α₀)
-z₀ = sin(δ₀)
+A = cos(δ₀) * sin(α₀ + ζ)
+B = cos(θ) * cos(δ₀) * cos(α₀ + ζ) - sin(θ) * sin(δ₀)
+C = sin(θ) * cos(δ₀) * cos(α₀ + ζ) + cos(θ) * sin(δ₀)
 
-# build precession rotation matrix P = Rz(-z) · Ry(θ) · Rz(-ζ)
-# or equivalently apply three successive rotations
-
-# result: new unit vector (x, y, z)
-α = atan2(y, x)
-δ = arcsin(z)
+α = atan2(A, B) + z
+δ = arcsin(C)
 ```
 
-the full rotation matrix P is the product of three axis rotations. see meeus ch. 21 for the explicit matrix elements.
+rotation-convention note: `src/sky/coordinates.js` uses meeus's closed-form precession equations directly. if you restate the transform as an explicit rotation matrix, be careful about active-vs-passive convention; the sign on θ changes between those conventions. the previous `Rz(-z) · Ry(θ) · Rz(-ζ)` shorthand was ambiguous and should not be used as the implementation reference.
 
 **caching:** precession changes slowly (~50"/year). recompute star positions only when the observation date changes by more than ~1 game-minute, or on time jumps. store precessed positions and reuse across frames.
 
@@ -201,6 +210,8 @@ the BSC5P dataset includes hipparcos IDs (`hip` field). match constellation line
 
 ## 6. planets (VSOP87)
 
+implementation note: MVP uses astronomy-engine for these computations. the formulae below are retained as reference for a potential future from-scratch implementation.
+
 ### overview
 
 VSOP87 (variations séculaires des orbites planétaires) gives heliocentric positions of planets as truncated trigonometric series in time. each coordinate is a sum of terms:
@@ -247,6 +258,8 @@ render as larger, non-twinkling sprites with distinctive colors (venus: white, m
 
 ## 7. sun position
 
+implementation note: MVP uses astronomy-engine for these computations. the formulae below are retained as reference for a potential future from-scratch implementation.
+
 derive from VSOP87 earth coordinates:
 
 ```
@@ -265,13 +278,15 @@ convert to RA/Dec, then alt/az. the sun's altitude drives the atmosphere shader 
 | -12° to -18°| astronomical twilight   | transition to full night|
 | < -18°      | night                   | full dark, all stars visible |
 
-star visibility blend: `visibility = smoothstep(-6°, -18°, sunAltitude)` (0 at -6°, 1 at -18°).
+star visibility blend: `visibility = 1.0 - smoothstep(-18.0, -6.0, sunAltitude)`.
 
 ## 8. moon position
 
+implementation note: MVP uses astronomy-engine for these computations. the formulae below are retained as reference for a potential future from-scratch implementation.
+
 ### simplified theory
 
-use meeus ch. 47 (truncated brown's lunar theory). the moon's ecliptic longitude (λ), latitude (β), and distance (Δ) are computed from ~60 periodic terms involving:
+use meeus ch. 47 (truncated ELP2000/82 lunar theory, chapront). the moon's ecliptic longitude (λ), latitude (β), and distance (Δ) are computed from ~60 periodic terms involving:
 
 - mean elongation (D)
 - sun's mean anomaly (M)
@@ -280,22 +295,24 @@ use meeus ch. 47 (truncated brown's lunar theory). the moon's ecliptic longitude
 
 these four fundamental arguments are polynomials in T. the periodic terms are tabulated in meeus.
 
-accuracy: ~0.1° in longitude, sufficient for naked-eye positioning.
+accuracy: about ~10" in longitude and ~4" in latitude for the truncated theory described by meeus.
 
 ### moon phase
 
-the phase angle (i) is the angular separation between the sun and moon as seen from earth:
+MVP note: runtime phase shading uses astronomy-engine's `Illumination('Moon', ...)` output, not the shortcut derivation below.
+
+for reference, if `E` is the geocentric sun-moon elongation as seen from earth:
 
 ```
-cos(i) = sin(δ_sun) * sin(δ_moon) + cos(δ_sun) * cos(δ_moon) * cos(α_sun - α_moon)
+cos(E) = sin(δ_sun) * sin(δ_moon) + cos(δ_sun) * cos(δ_moon) * cos(α_sun - α_moon)
 ```
 
 illuminated fraction:
 ```
-k = (1 + cos(i)) / 2
+k = (1 - cos(E)) / 2
 ```
 
-k ranges from 0 (new moon) to 1 (full moon). use k to shade the moon disc: a shader that draws the terminator line based on the phase angle and position angle.
+this gives `k = 0` at new moon (`E ≈ 0`) and `k = 1` at full moon (`E ≈ 180°`). if you instead use the true selenocentric phase angle `i`, then `k = (1 + cos(i)) / 2`, but that requires a different computation than the elongation formula above.
 
 ## 9. numerical notes
 
@@ -318,4 +335,6 @@ test dates should span the full range:
 - J2000 (2000-01-01): baseline, easiest to verify
 - 1000 CE: moderate precession, historical period
 - 3000 BCE: large precession, polaris far from pole
-- 1 CE: calendar transition boundary
+- 1582-10-15: calendar transition boundary
+
+when comparing against stellarium, ensure stellarium is set to J2000 equatorial coordinates with atmospheric refraction disabled. otherwise apparent alt/az can differ from geometric alt/az by up to ~0.5° near the horizon.

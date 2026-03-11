@@ -59,6 +59,14 @@ export function createHud() {
 }
 
 export function updateHud(hud, state) {
+  const planetSection = Array.isArray(state.planetLines) && state.planetLines.length > 0
+    ? `\n${state.planetLines.join('\n')}`
+    : '';
+  const sunMoonSection = Array.isArray(state.sunMoonLines) && state.sunMoonLines.length > 0
+    ? `\n${state.sunMoonLines.join('\n')}`
+    : '';
+  const spawnSection = state.spawnModeLabel ? `\nspawn ${state.spawnModeLabel}` : '';
+
   hud.content.textContent =
     `jd   ${state.jd.toFixed(5)}\n` +
     `utc  ${formatGregorianDateTime(state.gregorian)}\n` +
@@ -66,7 +74,10 @@ export function updateHud(hud, state) {
     `lst  ${state.lst.toFixed(3)}\u00b0\n` +
     `obs  lat ${formatDegrees(state.latitude)}  lon ${formatDegrees(state.longitude)}\n` +
     `spd  ${state.paused ? 'paused' : `${state.speedMultiplier.toFixed(0)}x`}\n` +
-    `fps  ${state.fps.toFixed(1)}`;
+    `fps  ${state.fps.toFixed(1)}` +
+    spawnSection +
+    planetSection +
+    sunMoonSection;
 }
 
 export function toggleHud(hud) {

@@ -6,7 +6,6 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const dataDir = path.resolve(__dirname, '../public/data');
 const sourcePath = path.join(dataDir, 'hyg.csv');
 const outputPath = path.join(dataDir, 'bsc5.json');
-const STAR_LIMIT = 2000;
 
 function parseFloatSafe(value) {
   const parsed = Number.parseFloat(value);
@@ -124,8 +123,7 @@ async function main() {
         Number.isFinite(star.vmag) &&
         star.name !== 'Sol'
     )
-    .sort((left, right) => left.vmag - right.vmag)
-    .slice(0, STAR_LIMIT);
+    .sort((left, right) => left.vmag - right.vmag);
 
   await writeFile(outputPath, JSON.stringify(simplified, null, 2) + '\n');
 
