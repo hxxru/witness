@@ -46,9 +46,12 @@ each milestone is independently testable. verify before moving to the next.
 - **done when:** sirius is bright blue-white, betelgeuse is dimmer orange-red, faint stars are small dim points. the sky looks beautiful at a glance.
 
 ### milestone 4: constellation lines
-- [ ] obtain stellarium western constellation data (`constellationship.fab`)
-- [ ] cross-match hipparcos IDs to BSC catalog numbers
-- [ ] place `public/data/constellations.json` as array of `{name, lines: [[hip1, hip2], ...]}` 
+- [ ] obtain stellarium western sky-culture data (`western/index.json`)
+- [ ] parse stellarium's constellation JSON and extract constellation polylines
+- [ ] preprocess the polylines into `public/data/constellations.json` as `{name, abbr, lines: [[hip1, hip2], ...]}`
+- [ ] extract `common_names` into `public/data/star-names.json` for label lookups
+- [ ] cross-match HIP IDs to the filtered BSC catalog at runtime
+- [ ] skip segments whose endpoints are missing from the filtered catalog, and log incomplete constellations instead of failing
 - [ ] render as thin `THREE.LineSegments` connecting star positions
 - [ ] toggle visibility with a key (e.g., `C`)
 - **done when:** pressing C shows constellation lines overlaid on correct stars. orion's belt, big dipper handle, etc. are visually correct.

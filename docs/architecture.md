@@ -7,9 +7,13 @@ witness/
 ├── public/
 │   ├── data/
 │   │   ├── bsc5.json              # star catalog (top ~500 by vmag)
-│   │   ├── constellations.json    # constellation lines (hipparcos ID pairs)
+│   │   ├── stellarium-western.json# raw Stellarium western/index.json input
+│   │   ├── constellations.json    # processed constellation lines (HIP ID pairs)
+│   │   ├── star-names.json        # common star names keyed by HIP ID
 │   │   └── land-mask.png          # equirectangular land/ocean mask
 │   └── fonts/                     # UI fonts (Space Mono, Spectral or similar)
+├── scripts/
+│   └── preprocess-constellations.mjs  # flatten Stellarium polylines into segments
 ├── src/
 │   ├── main.js                    # entry: init scene, game loop, orchestration
 │   ├── sky/
@@ -70,13 +74,14 @@ each module has a single responsibility. modules communicate through well-define
 **depends on:** `coordinates.js` for math, star data from `public/data/bsc5.json`.
 
 ### `src/sky/constellations.js`
-**owns:** loading constellation data, creating line segments, updating positions.
+**owns:** loading processed constellation data, creating line segments, updating positions, skipping missing HIP endpoints gracefully.
 **exports:**
 - `createConstellationLines(scene, constellationData, starData)` → constellation lines object
 - `updateConstellationPositions(lines, lst, latitude, T)` — sync with star positions
 - `toggleConstellationLines(lines)` — show/hide on keypress
 
-**depends on:** `coordinates.js`, star position data (shares the same star catalog).
+**depends on:** `coordinates.js`, star position data (shares the same star catalog), processed data from `public/data/constellations.json`.
+when a segment endpoint is missing from the filtered BSC subset, skip that segment and log the constellation as incomplete instead of failing the whole overlay.
 
 ### `src/sky/planets.js`
 **owns:** VSOP87 computation, planet rendering.
@@ -164,6 +169,7 @@ each module has a single responsibility. modules communicate through well-define
 
 ### `src/ui/*`
 **owns:** all DOM-based UI. HTML overlays, not three.js objects (except labels which may use sprites).
+`labels.js` should use `public/data/star-names.json` for star labels and planet display names from runtime data.
 **exports:** init and update functions for each UI component.
 
 ## data flow
@@ -226,6 +232,38 @@ game loop (main.js):
   },
   ...
 ]
+```
+
+this is a processed runtime artifact generated from Stellarium's western sky-culture JSON. each `lines` entry is flattened to explicit segment pairs so rendering can feed directly into `THREE.LineSegments`.
+
+### `public/data/stellarium-western.json`
+```json
+{
+  "constellations": [
+    {
+      "iau": "Ori",
+      "lines": [
+        [27989, 26727, 26311],
+        [26727, 27366]
+      ]
+    }
+  ],
+  "common_names": {
+    "HIP 27989": {
+      "english": "Betelgeuse"
+    }
+  }
+}
+```
+
+the raw Stellarium format stores each constellation `lines` entry as a polyline chain. preprocessing expands `[a, b, c]` into `[[a, b], [b, c]]` and extracts star names from `common_names`.
+
+### `public/data/star-names.json`
+```json
+{
+  "27989": "Betelgeuse",
+  "24436": "Rigel"
+}
 ```
 
 ## dependencies
