@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { computeAttenuation } from '../sky/attenuation.js';
+import { setHighlightedConstellation } from '../sky/constellations.js';
 import { tuning } from './debug-panel.js';
 
 const NAMED_STAR_MAGNITUDE_LIMIT = 3;
@@ -19,6 +20,23 @@ function toScreenCoordinates(projected) {
 function altitudeFromWorldPosition(position, observerPosition, radius) {
   const relativeY = (position.y - observerPosition.y) / radius;
   return Math.asin(THREE.MathUtils.clamp(relativeY, -1, 1)) * THREE.MathUtils.RAD2DEG;
+}
+
+function distanceToSegment(pointX, pointY, startX, startY, endX, endY) {
+  const dx = endX - startX;
+  const dy = endY - startY;
+  const lengthSquared = dx * dx + dy * dy;
+
+  if (lengthSquared <= 1e-6) {
+    return Math.hypot(pointX - startX, pointY - startY);
+  }
+
+  const projection = ((pointX - startX) * dx + (pointY - startY) * dy) / lengthSquared;
+  const clampedProjection = THREE.MathUtils.clamp(projection, 0, 1);
+  const nearestX = startX + dx * clampedProjection;
+  const nearestY = startY + dy * clampedProjection;
+
+  return Math.hypot(pointX - nearestX, pointY - nearestY);
 }
 
 export function createLabels({ starField, planets, sunMoon }) {
@@ -116,6 +134,8 @@ export function createLabels({ starField, planets, sunMoon }) {
     bodyTargets,
     permanentLabels,
     projected: new THREE.Vector3(),
+    projectedStart: new THREE.Vector3(),
+    projectedEnd: new THREE.Vector3(),
     dispose() {
       window.removeEventListener('pointermove', onPointerMove);
       window.removeEventListener('pointerleave', onPointerLeave);
@@ -124,11 +144,12 @@ export function createLabels({ starField, planets, sunMoon }) {
   };
 }
 
-export function updateLabels(labels, { starField, camera, sunAltitude = -90 }) {
+export function updateLabels(labels, { starField, camera, sunAltitude = -90, constellationLines = null }) {
   if (!labels.mouse.active) {
     for (const label of labels.permanentLabels) {
       label.style.visibility = '';
     }
+    setHighlightedConstellation(constellationLines, null);
     labels.hover.style.display = 'none';
     return;
   }
@@ -165,7 +186,7 @@ export function updateLabels(labels, { starField, camera, sunAltitude = -90 }) {
 
     if (distance < nearestDistance) {
       nearestDistance = distance;
-      nearest = { name: star.name, magnitude: star.vmag, screen, permanentLabel: null };
+      nearest = { kind: 'star', name: star.name, magnitude: star.vmag, screen, permanentLabel: null };
     }
   }
 
@@ -191,6 +212,7 @@ export function updateLabels(labels, { starField, camera, sunAltitude = -90 }) {
     if (distance < nearestDistance) {
       nearestDistance = distance;
       nearest = {
+        kind: 'body',
         name: target.name,
         magnitude: target.magnitude,
         screen,
@@ -199,11 +221,62 @@ export function updateLabels(labels, { starField, camera, sunAltitude = -90 }) {
     }
   }
 
+  if (constellationLines?.enabled) {
+    for (const segment of constellationLines.segmentPairs) {
+      const start = starField.positions[segment.startIndex];
+      const end = starField.positions[segment.endIndex];
+      const startAltitude = altitudeFromWorldPosition(start, starField.observerPosition, starField.radius);
+      const endAltitude = altitudeFromWorldPosition(end, starField.observerPosition, starField.radius);
+      const startAttenuation = computeAttenuation(startAltitude, sunAltitude, 'stars');
+      const endAttenuation = computeAttenuation(endAltitude, sunAltitude, 'stars');
+
+      if (startAttenuation.brightness <= 0.01 && endAttenuation.brightness <= 0.01) {
+        continue;
+      }
+
+      labels.projectedStart.copy(start).project(camera);
+      labels.projectedEnd.copy(end).project(camera);
+
+      if (!isOnScreen(labels.projectedStart) && !isOnScreen(labels.projectedEnd)) {
+        continue;
+      }
+
+      const screenStart = toScreenCoordinates(labels.projectedStart);
+      const screenEnd = toScreenCoordinates(labels.projectedEnd);
+      const distance = distanceToSegment(
+        labels.mouse.x,
+        labels.mouse.y,
+        screenStart.x,
+        screenStart.y,
+        screenEnd.x,
+        screenEnd.y
+      );
+
+      if (distance < nearestDistance) {
+        nearestDistance = distance;
+        nearest = {
+          kind: 'constellation',
+          name: segment.nativeName
+            ? `${segment.nativeName}\n${segment.englishName.toUpperCase()}`
+            : segment.englishName.toUpperCase(),
+          magnitude: null,
+          screen: {
+            x: (screenStart.x + screenEnd.x) * 0.5,
+            y: (screenStart.y + screenEnd.y) * 0.5,
+          },
+          permanentLabel: null,
+          constellationName: segment.constellationId,
+        };
+      }
+    }
+  }
+
   for (const label of labels.permanentLabels) {
     label.style.visibility = '';
   }
 
   if (!nearest || nearestDistance > tuning.labels.hoverThreshold) {
+    setHighlightedConstellation(constellationLines, null);
     labels.hover.style.display = 'none';
     return;
   }
@@ -213,6 +286,18 @@ export function updateLabels(labels, { starField, camera, sunAltitude = -90 }) {
 
   if (nearest.permanentLabel) {
     nearest.permanentLabel.style.visibility = 'hidden';
+  }
+
+  if (nearest.kind === 'constellation') {
+    labels.hover.style.fontSize = '13px';
+    labels.hover.style.whiteSpace = 'pre-line';
+    labels.hover.style.color = '#d8e7ff';
+    setHighlightedConstellation(constellationLines, nearest.constellationName ?? null);
+  } else {
+    labels.hover.style.fontSize = '11px';
+    labels.hover.style.whiteSpace = 'nowrap';
+    labels.hover.style.color = '#f5e6c8';
+    setHighlightedConstellation(constellationLines, null);
   }
 
   labels.hover.textContent = Number.isFinite(nearest.magnitude)

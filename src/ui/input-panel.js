@@ -49,7 +49,7 @@ function createLabeledField(root, labelText, input) {
   root.appendChild(wrapper);
 }
 
-export function createInputPanel({ onSubmit } = {}) {
+export function createInputPanel({ onSubmit, onSkyCultureChange, skyCultures = [] } = {}) {
   const root = document.createElement('div');
   root.style.position = 'fixed';
   root.style.left = '16px';
@@ -121,6 +121,21 @@ export function createInputPanel({ onSubmit } = {}) {
   styleField(date);
   createLabeledField(form, 'Date', date);
 
+  const skyCulture = document.createElement('select');
+  styleField(skyCulture);
+  skyCulture.style.cursor = 'pointer';
+
+  for (const culture of skyCultures) {
+    const option = document.createElement('option');
+    option.value = culture.id;
+    option.textContent = culture.label;
+    option.style.background = '#0b111a';
+    option.style.color = '#f5e6c8';
+    skyCulture.appendChild(option);
+  }
+
+  createLabeledField(form, 'Sky Culture', skyCulture);
+
   const submit = document.createElement('button');
   submit.type = 'submit';
   submit.textContent = 'go';
@@ -144,6 +159,7 @@ export function createInputPanel({ onSubmit } = {}) {
     latitude,
     longitude,
     date,
+    skyCulture,
     visible: false,
   };
 
@@ -172,6 +188,10 @@ export function createInputPanel({ onSubmit } = {}) {
     });
   });
 
+  skyCulture.addEventListener('change', () => {
+    onSkyCultureChange?.(panel.skyCulture.value);
+  });
+
   window.addEventListener('keydown', (event) => {
     if (event.code === 'Escape' && panel.visible) {
       panel.setOpen(false);
@@ -185,8 +205,9 @@ export function createInputPanel({ onSubmit } = {}) {
 export function updateInputPanel(panel, state) {
   const dateValue = formatDateForInput(state.gregorian);
   panel.current.textContent =
-    `current:\nlat ${formatDegrees(state.latitude)}\nlon ${formatDegrees(state.longitude)}\ndate ${dateValue}`;
+    `current:\nlat ${formatDegrees(state.latitude)}\nlon ${formatDegrees(state.longitude)}\ndate ${dateValue}\nculture ${state.skyCultureLabel}`;
   panel.latitude.placeholder = formatDegrees(state.latitude, 4);
   panel.longitude.placeholder = formatDegrees(state.longitude, 4);
   panel.date.placeholder = dateValue;
+  panel.skyCulture.value = state.skyCultureId;
 }

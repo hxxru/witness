@@ -96,6 +96,7 @@ what shipped by the end of the MVP:
   - latitude input
   - longitude input
   - gregorian / astronomical-year date input
+  - skyculture selector
   - instant teleport + world rebuild on submit
 - top-center compass strip with cardinal directions and live heading readout
 - debug tuning panel with live sliders for stars, bloom, planets, sun/moon, atmosphere, Milky Way, fog, trees, water, player movement, labels, and sky attenuation
@@ -106,9 +107,14 @@ what shipped by the end of the MVP:
 - post-processing bloom integrated with the night-sky rendering
 - permanent labels for planets, sun, and moon
 - hover labels filtered so hidden/daytime stars do not produce false name popups
+- constellation hover labels when constellation lines are enabled, including highlighted hovered figures
+- live skyculture switching for constellation overlays, including native-name-over-English hover labels for non-western cultures
 - star-count feedback tied to the limiting-magnitude slider
 - ocean water with moon reflection and darker nighttime ocean treatment
 - world rebuild flow that updates terrain seed, spawn mode, observer location, and celestial state together when place/date changes
+
+future TODO:
+- if a dedicated settings panel is added later, consider moving the skyculture selector out of the location/date panel and into settings
 
 ### development and data pipeline delivered as part of MVP
 

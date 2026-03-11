@@ -2,6 +2,49 @@ import * as THREE from 'three';
 import { computeAttenuation } from './attenuation.js';
 import { tuning } from '../ui/debug-panel.js';
 
+export const SKY_CULTURES = [
+  { id: 'western', label: 'Western' },
+  { id: 'arabic-ancient', label: 'Arabic Ancient' },
+  { id: 'chinese', label: 'Chinese' },
+  { id: 'korean', label: 'Korean' },
+];
+
+function segmentsFromPolylines(polylines) {
+  const segments = [];
+
+  for (const polyline of polylines ?? []) {
+    for (let index = 0; index < polyline.length - 1; index += 1) {
+      segments.push([polyline[index], polyline[index + 1]]);
+    }
+  }
+
+  return segments;
+}
+
+function normalizeSkyCultureData(rawData, skyCultureId) {
+  if (Array.isArray(rawData)) {
+    return rawData.map((constellation) => ({
+      ...constellation,
+      englishName: constellation.name,
+      nativeName: null,
+    }));
+  }
+
+  return (rawData.constellations ?? []).map((constellation) => ({
+    name:
+      constellation.common_name?.english ??
+      constellation.common_name?.native ??
+      constellation.id,
+    englishName:
+      constellation.common_name?.english ??
+      constellation.common_name?.native ??
+      constellation.id,
+    nativeName: constellation.common_name?.native ?? null,
+    abbr: constellation.id,
+    lines: segmentsFromPolylines(constellation.lines),
+  }));
+}
+
 export async function loadConstellationData(url = '/data/constellations.json') {
   const response = await fetch(url);
 
@@ -10,6 +53,25 @@ export async function loadConstellationData(url = '/data/constellations.json') {
   }
 
   return response.json();
+}
+
+export async function loadSkyCultureData(skyCultureId = 'western') {
+  const selectedCulture = SKY_CULTURES.find((culture) => culture.id === skyCultureId);
+
+  if (!selectedCulture) {
+    throw new Error(`Unknown sky culture "${skyCultureId}".`);
+  }
+
+  const url =
+    skyCultureId === 'western'
+      ? '/data/constellations.json'
+      : `/data/skycultures/${skyCultureId}.json`;
+  const rawData = await loadConstellationData(url);
+
+  return {
+    ...selectedCulture,
+    constellations: normalizeSkyCultureData(rawData, skyCultureId),
+  };
 }
 
 export function createConstellationLines(scene, constellationData, starData) {
@@ -41,6 +103,9 @@ export function createConstellationLines(scene, constellationData, starData) {
 
       segmentPairs.push({
         constellation: constellation.name,
+        constellationId: constellation.abbr ?? constellation.name,
+        englishName: constellation.englishName ?? constellation.name,
+        nativeName: constellation.nativeName ?? null,
         startIndex,
         endIndex,
       });
@@ -98,7 +163,18 @@ export function createConstellationLines(scene, constellationData, starData) {
     tintColor: new THREE.Color(1, 1, 1),
     scratchColor: new THREE.Color(),
     enabled: false,
+    highlightedConstellation: null,
   };
+}
+
+export function destroyConstellationLines(constellationLines) {
+  if (!constellationLines) {
+    return;
+  }
+
+  constellationLines.lines.parent?.remove(constellationLines.lines);
+  constellationLines.lines.geometry.dispose();
+  constellationLines.lines.material.dispose();
 }
 
 function altitudeFromWorldPosition(position, observerPosition, radius) {
@@ -140,7 +216,10 @@ export function updateConstellationPositions(constellationLines, starField, sunA
     const startColor = constellationLines.scratchColor
       .copy(constellationLines.baseColor)
       .multiply(constellationLines.tintColor)
-      .multiplyScalar(startAttenuation.brightness);
+      .multiplyScalar(
+        startAttenuation.brightness *
+          (segment.constellationId === constellationLines.highlightedConstellation ? 3 : 1)
+      );
     constellationLines.colors[offset] = startColor.r;
     constellationLines.colors[offset + 1] = startColor.g;
     constellationLines.colors[offset + 2] = startColor.b;
@@ -153,7 +232,10 @@ export function updateConstellationPositions(constellationLines, starField, sunA
     const endColor = constellationLines.scratchColor
       .copy(constellationLines.baseColor)
       .multiply(constellationLines.tintColor)
-      .multiplyScalar(endAttenuation.brightness);
+      .multiplyScalar(
+        endAttenuation.brightness *
+          (segment.constellationId === constellationLines.highlightedConstellation ? 3 : 1)
+      );
     constellationLines.colors[offset + 3] = endColor.r;
     constellationLines.colors[offset + 4] = endColor.g;
     constellationLines.colors[offset + 5] = endColor.b;
@@ -182,4 +264,14 @@ export function updateConstellationVisibility(constellationLines) {
 
   constellationLines.lines.material.opacity = tuning.constellationLines.opacity;
   constellationLines.lines.material.linewidth = tuning.constellationLines.linewidth;
+}
+
+export function setHighlightedConstellation(constellationLines, constellationName) {
+  if (!constellationLines) {
+    return false;
+  }
+
+  const changed = constellationLines.highlightedConstellation !== constellationName;
+  constellationLines.highlightedConstellation = constellationName;
+  return changed;
 }

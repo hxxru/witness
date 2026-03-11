@@ -14,7 +14,9 @@ import {
 } from './sky/coordinates.js';
 import {
   createConstellationLines,
-  loadConstellationData,
+  destroyConstellationLines,
+  loadSkyCultureData,
+  SKY_CULTURES,
   toggleConstellationLines,
   updateConstellationVisibility,
   updateConstellationPositions,
@@ -142,6 +144,7 @@ let lastFrameTime = null;
 let fps = 0;
 let spawnState = null;
 let spawnModeOverride = null;
+let currentSkyCulture = SKY_CULTURES[0];
 let observerLatitude = INITIAL_OBSERVER_LATITUDE;
 let observerLongitude = INITIAL_OBSERVER_LONGITUDE;
 const observerWorldPosition = new THREE.Vector3();
@@ -388,6 +391,14 @@ function destroyWorld() {
   spawnState = null;
 }
 
+function rebuildConstellationOverlay(constellationData, { preserveEnabled = true } = {}) {
+  const wasEnabled = preserveEnabled ? (constellationLines?.enabled ?? false) : false;
+  destroyConstellationLines(constellationLines);
+  constellationLines = createConstellationLines(scene, constellationData, starField.stars);
+  constellationLines.enabled = wasEnabled;
+  constellationLines.lines.visible = wasEnabled;
+}
+
 function buildWorldForCurrentSpawn() {
   destroyWorld();
   const worldSeed = deriveWorldSeed(observerLatitude, observerLongitude);
@@ -525,11 +536,6 @@ function syncSceneState(timeSeconds = 0) {
     updateBoatLighting(boat, atmosphereState.ambientLevel);
   }
 
-  if (starField && constellationLines && clock) {
-    updateConstellationPositions(constellationLines, starField, getSunAltitude(sunMoon));
-    updateConstellationVisibility(constellationLines);
-  }
-
   if (hud && clock) {
     updateHud(hud, {
       jd: getClockJD(clock),
@@ -559,6 +565,8 @@ function syncSceneState(timeSeconds = 0) {
       latitude: observerLatitude,
       longitude: observerLongitude,
       gregorian: getClockGregorian(clock),
+      skyCultureId: currentSkyCulture.id,
+      skyCultureLabel: currentSkyCulture.label,
     });
   }
 
@@ -569,7 +577,13 @@ function syncSceneState(timeSeconds = 0) {
       starField,
       camera,
       sunAltitude: getSunAltitude(sunMoon),
+      constellationLines,
     });
+  }
+
+  if (starField && constellationLines && clock) {
+    updateConstellationPositions(constellationLines, starField, getSunAltitude(sunMoon));
+    updateConstellationVisibility(constellationLines);
   }
 }
 
@@ -605,12 +619,13 @@ function updateBloomForSky(sunAltitude) {
 }
 
 async function init() {
-  const [starCatalog, constellationData, loadedLandMask] = await Promise.all([
+  const [starCatalog, skyCultureData, loadedLandMask] = await Promise.all([
     loadStarCatalog(),
-    loadConstellationData(),
+    loadSkyCultureData(currentSkyCulture.id),
     loadLandMask(),
   ]);
   landMask = loadedLandMask;
+  currentSkyCulture = skyCultureData;
   starField = createStarField(scene, starCatalog);
   planets = createPlanets(scene);
   milkyWay = await createMilkyWay(scene);
@@ -621,13 +636,14 @@ async function init() {
   buildWorldForCurrentSpawn();
 
   polarisMarker = createPolarisMarker(scene, starField);
-  constellationLines = createConstellationLines(scene, constellationData, starCatalog);
+  constellationLines = createConstellationLines(scene, skyCultureData.constellations, starCatalog);
   hud = createHud();
   debugPanel = createDebugPanel();
   compass = createCompass();
   labels = createLabels({ starField, planets, sunMoon });
   clock = createClock(J2000_JD);
   inputPanel = createInputPanel({
+    skyCultures: SKY_CULTURES,
     onSubmit: ({ latitude, longitude, date, close }) => {
       try {
         const parsedLatitude = Number.parseFloat(latitude);
@@ -648,6 +664,16 @@ async function init() {
           jd: julianDate(parsedDate.year, parsedDate.month, parsedDate.day, 0),
         });
         close?.();
+      } catch (error) {
+        console.error(error);
+      }
+    },
+    onSkyCultureChange: async (skyCultureId) => {
+      try {
+        const skyCulture = await loadSkyCultureData(skyCultureId);
+        currentSkyCulture = skyCulture;
+        rebuildConstellationOverlay(skyCulture.constellations);
+        syncSceneState((lastFrameTime ?? 0) * 0.001);
       } catch (error) {
         console.error(error);
       }
