@@ -23,6 +23,23 @@ function clamp(value, minimum, maximum) {
   return Math.min(Math.max(value, minimum), maximum);
 }
 
+function resolveActiveStarCount(stars, limitingMagnitude) {
+  let low = 0;
+  let high = stars.length;
+
+  while (low < high) {
+    const middle = Math.floor((low + high) / 2);
+
+    if (stars[middle].vmag <= limitingMagnitude) {
+      low = middle + 1;
+    } else {
+      high = middle;
+    }
+  }
+
+  return low;
+}
+
 export function colorForBV(bv) {
   if (!Number.isFinite(bv)) {
     return new THREE.Color('#f4f7ff');
@@ -125,6 +142,8 @@ export function createStarField(scene, starData) {
     dummy: new THREE.Object3D(),
     renderedCount: 0,
     visibleCount: 0,
+    activeCount: resolveActiveStarCount(stars, tuning.stars.limitingMagnitude),
+    lastActiveCount: -1,
     tintColor: new THREE.Color(1, 1, 1),
     scratchColor: new THREE.Color(),
   };
@@ -135,11 +154,14 @@ export function updateStarPositions(starField, lst, latitude, T, observerPositio
     starField.observerPosition.copy(observerPosition);
   }
 
+  const activeCount = resolveActiveStarCount(starField.stars, tuning.stars.limitingMagnitude);
+
   if (
     starField.lastPrecessionT === null ||
-    Math.abs(T - starField.lastPrecessionT) >= PRECESSION_RECOMPUTE_THRESHOLD_T
+    Math.abs(T - starField.lastPrecessionT) >= PRECESSION_RECOMPUTE_THRESHOLD_T ||
+    activeCount !== starField.lastActiveCount
   ) {
-    for (let index = 0; index < starField.stars.length; index += 1) {
+    for (let index = 0; index < activeCount; index += 1) {
       const star = starField.stars[index];
       starField.precessedEquatorial[index] = precessRADec(star.ra, star.dec, T);
     }
@@ -147,46 +169,33 @@ export function updateStarPositions(starField, lst, latitude, T, observerPositio
     starField.lastPrecessionT = T;
   }
 
-  let renderedCount = 0;
-
-  for (let index = 0; index < starField.stars.length; index += 1) {
+  for (let index = 0; index < activeCount; index += 1) {
     const star = starField.stars[index];
     const precessed = starField.precessedEquatorial[index];
     const horizontal = equatorialToHorizontal(precessed.ra, precessed.dec, lst, latitude);
     const cartesian = horizontalToCartesian(horizontal.alt, horizontal.az, starField.radius);
     const worldPosition = starField.positions[index];
-    const visible = !Number.isFinite(star.vmag) || star.vmag <= tuning.stars.limitingMagnitude;
 
     worldPosition.set(cartesian.x, cartesian.y, cartesian.z).add(starField.observerPosition);
 
-    const matrix = buildInstanceMatrix(
-      worldPosition,
-      visible ? sizeForMagnitude(star.vmag) : 0,
-      starField.observerPosition,
-      starField.dummy
-    );
+    const matrix = buildInstanceMatrix(worldPosition, sizeForMagnitude(star.vmag), starField.observerPosition, starField.dummy);
 
     starField.mesh.setMatrixAt(index, matrix);
-    if (visible) {
-      renderedCount += 1;
-    }
   }
 
+  starField.mesh.count = activeCount;
   starField.mesh.instanceMatrix.needsUpdate = true;
-  starField.renderedCount = renderedCount;
-  tuning.stars.renderedCount = renderedCount;
+  starField.activeCount = activeCount;
+  starField.lastActiveCount = activeCount;
+  starField.renderedCount = activeCount;
+  tuning.stars.renderedCount = activeCount;
 }
 
 export function updateStarVisibility(starField, sunAltitude) {
   let visibleCount = 0;
 
-  for (let index = 0; index < starField.stars.length; index += 1) {
+  for (let index = 0; index < starField.activeCount; index += 1) {
     const star = starField.stars[index];
-
-    if (Number.isFinite(star.vmag) && star.vmag > tuning.stars.limitingMagnitude) {
-      starField.mesh.setColorAt(index, starField.scratchColor.setRGB(0, 0, 0));
-      continue;
-    }
 
     const relativeY = (starField.positions[index].y - starField.observerPosition.y) / starField.radius;
     const altitude = Math.asin(clamp(relativeY, -1, 1)) * THREE.MathUtils.RAD2DEG;
