@@ -7,6 +7,7 @@ import {
   createAtmosphere,
   updateAtmosphere,
 } from './sky/atmosphere.js';
+import { computeAttenuation } from './sky/attenuation.js';
 import {
   julianDate,
   localSiderealTime,
@@ -19,11 +20,11 @@ import {
   updateConstellationPositions,
 } from './sky/constellations.js';
 import { createPlanets, getPlanetDebugData, updatePlanetPositions } from './sky/planets.js';
+import { createMilkyWay, updateMilkyWay } from './sky/milkyway.js';
 import {
   createPolarisMarker,
   createStarField,
   loadStarCatalog,
-  starVisibilityForSunAltitude,
   togglePolarisMarker,
   updatePolarisMarker,
   updateStarVisibility,
@@ -49,8 +50,12 @@ import {
   tickClock,
 } from './time/clock.js';
 import { createDebugPanel, toggleDebugPanel, tuning } from './ui/debug-panel.js';
+import { createCompass, updateCompass } from './ui/compass.js';
 import { createHud, toggleHud, updateHud } from './ui/hud.js';
-import { createTimeControls } from './ui/time-controls.js';
+import { createInputPanel, updateInputPanel } from './ui/input-panel.js';
+import { createLabels, updateLabels } from './ui/labels.js';
+import { createTimeControls, updateTimeControls } from './ui/time-controls.js';
+import { createPlayerCamera, lookPlayerAt, setPlayerSpawn, updatePlayer } from './player/camera.js';
 import { spawnPlayer } from './player/spawn.js';
 import { createBoat, updateBoatLighting, updateBoatMotion } from './world/boat.js';
 import { createWorldFog, updateWorldFog } from './world/fog.js';
@@ -62,8 +67,8 @@ import { createWater, updateWater } from './world/water.js';
 // Entry point and temporary scene bootstrap. Systems are scaffolded under src/*
 // and will be wired into this orchestrator as milestones are implemented.
 
-const OBSERVER_LATITUDE = 45;
-const OBSERVER_LONGITUDE = 0;
+const INITIAL_OBSERVER_LATITUDE = 45;
+const INITIAL_OBSERVER_LONGITUDE = 0;
 const J2000_JD = 2451545.0;
 const ENABLE_BLOOM = true;
 const LAND_WATER_OPTIONS = {
@@ -79,12 +84,6 @@ const OCEAN_WATER_OPTIONS = {
   waterNight: '#02070f',
 };
 const SPAWN_OVERRIDE_SEQUENCE = [null, 'ocean', 'land'];
-const SPEED_PRESETS = {
-  Digit1: 1,
-  Digit2: 60,
-  Digit3: 360,
-  Digit4: 3600,
-};
 
 // --- scene setup ---
 const scene = new THREE.Scene();
@@ -120,6 +119,7 @@ composer.addPass(bloomPass);
 let starField = null;
 let constellationLines = null;
 let planets = null;
+let milkyWay = null;
 let sunMoon = null;
 let atmosphere = null;
 let terrain = null;
@@ -132,24 +132,20 @@ let polarisMarker = null;
 let clock = null;
 let hud = null;
 let debugPanel = null;
+let compass = null;
+let inputPanel = null;
+let labels = null;
 let timeControls = null;
+let player = null;
 let currentLST = 0;
 let lastFrameTime = null;
 let fps = 0;
 let spawnState = null;
 let spawnModeOverride = null;
-const lookState = {
-  dragging: false,
-  yaw: 0,
-  pitch: 0,
-  sensitivity: 0.0032,
-};
+let observerLatitude = INITIAL_OBSERVER_LATITUDE;
+let observerLongitude = INITIAL_OBSERVER_LONGITUDE;
 const observerWorldPosition = new THREE.Vector3();
 const initialLookTarget = new THREE.Vector3(0, 16, -120);
-
-function clamp(value, minimum, maximum) {
-  return Math.min(Math.max(value, minimum), maximum);
-}
 
 function isGregorianDate(year, month, day) {
   return (
@@ -177,6 +173,55 @@ function daysInMonth(year, month) {
 
 function jdFromGregorianParts({ year, month, day, hour }) {
   return julianDate(year, month, day, hour);
+}
+
+function parseDateInput(value) {
+  const match = value.match(/^([+-]?\d+)-(\d{2})-(\d{2})$/);
+
+  if (!match) {
+    throw new Error(`Invalid date format: "${value}". Use YYYY-MM-DD.`);
+  }
+
+  const year = Number.parseInt(match[1], 10);
+  const month = Number.parseInt(match[2], 10);
+  const day = Number.parseInt(match[3], 10);
+
+  if (!Number.isInteger(year) || !Number.isInteger(month) || !Number.isInteger(day)) {
+    throw new Error(`Invalid date: "${value}".`);
+  }
+
+  if (month < 1 || month > 12) {
+    throw new Error(`Month out of range in "${value}".`);
+  }
+
+  if (day < 1 || day > daysInMonth(year, month)) {
+    throw new Error(`Day out of range in "${value}".`);
+  }
+
+  return { year, month, day };
+}
+
+function deriveWorldSeed(latitude, longitude) {
+  let hash = 2166136261;
+  const parts = [
+    Math.round((latitude + 90) * 10000),
+    Math.round((longitude + 180) * 10000),
+  ];
+
+  for (const part of parts) {
+    hash ^= part >>> 0;
+    hash = Math.imul(hash, 16777619);
+  }
+
+  return (hash >>> 0) || 1;
+}
+
+function isEditableTarget(target) {
+  if (!(target instanceof HTMLElement)) {
+    return false;
+  }
+
+  return target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT';
 }
 
 function shiftGregorianByMonth(gregorian, monthDelta) {
@@ -222,7 +267,7 @@ function jumpClock(unit, direction) {
     setClockJD(clock, jdFromGregorianParts(shifted));
   }
 
-  currentLST = localSiderealTime(getClockGMST(clock), OBSERVER_LONGITUDE);
+  currentLST = localSiderealTime(getClockGMST(clock), observerLongitude);
 }
 
 function setCameraParent(parent) {
@@ -233,13 +278,6 @@ function setCameraParent(parent) {
   }
 
   nextParent.add(camera);
-}
-
-function updateCameraLookDirection() {
-  camera.rotation.order = 'YXZ';
-  camera.rotation.x = lookState.pitch;
-  camera.rotation.y = lookState.yaw;
-  camera.rotation.z = 0;
 }
 
 function updateObserverWorldPosition() {
@@ -352,53 +390,195 @@ function destroyWorld() {
 
 function buildWorldForCurrentSpawn() {
   destroyWorld();
+  const worldSeed = deriveWorldSeed(observerLatitude, observerLongitude);
 
   const resolvedMode = spawnPlayer(
     landMask,
-    OBSERVER_LATITUDE,
-    OBSERVER_LONGITUDE,
+    observerLatitude,
+    observerLongitude,
     null,
     spawnModeOverride
   ).mode;
 
   if (resolvedMode === 'land') {
-    terrain = createTerrain(scene, 1);
-    trees = createTrees(scene, terrain, 1);
+    terrain = createTerrain(scene, worldSeed);
+    trees = createTrees(scene, terrain, worldSeed);
     water = createWater(scene, LAND_WATER_OPTIONS);
     spawnState = spawnPlayer(
       landMask,
-      OBSERVER_LATITUDE,
-      OBSERVER_LONGITUDE,
+      observerLatitude,
+      observerLongitude,
       terrain,
       spawnModeOverride
     );
     setCameraParent(scene);
-    camera.position.set(
-      spawnState.worldOrigin.x + spawnState.cameraLocalOffset.x,
-      spawnState.worldOrigin.y + spawnState.cameraLocalOffset.y,
-      spawnState.worldOrigin.z + spawnState.cameraLocalOffset.z
-    );
   } else {
     water = createWater(scene, OCEAN_WATER_OPTIONS);
     boat = createBoat(scene, water.level);
     spawnState = spawnPlayer(
       landMask,
-      OBSERVER_LATITUDE,
-      OBSERVER_LONGITUDE,
+      observerLatitude,
+      observerLongitude,
       null,
       spawnModeOverride
     );
     setCameraParent(boat.cameraMount);
-    camera.position.set(
-      spawnState.cameraLocalOffset.x,
-      spawnState.cameraLocalOffset.y,
-      spawnState.cameraLocalOffset.z
+  }
+
+  if (player) {
+    setPlayerSpawn(player, spawnState);
+  }
+
+  updateObserverWorldPosition();
+  console.info(`Spawn mode: ${getSpawnModeLabel()}.`);
+}
+
+function syncSceneState(timeSeconds = 0) {
+  updateObserverWorldPosition();
+
+  if (starField && clock) {
+    updateStarPositions(starField, currentLST, observerLatitude, getClockT(clock), observerWorldPosition);
+    updatePolarisMarker(polarisMarker, starField);
+  }
+
+  if (sunMoon && clock) {
+    updateSunMoon(
+      sunMoon,
+      getClockJD(clock),
+      currentLST,
+      observerLatitude,
+      observerLongitude,
+      camera,
+      observerWorldPosition
     );
   }
 
-  updateCameraLookDirection();
-  updateObserverWorldPosition();
-  console.info(`Spawn mode: ${getSpawnModeLabel()}.`);
+  if (planets && clock) {
+    updatePlanetPositions(
+      planets,
+      getClockJD(clock),
+      currentLST,
+      observerLatitude,
+      observerLongitude,
+      camera,
+      observerWorldPosition,
+      getSunAltitude(sunMoon)
+    );
+  }
+
+  if (milkyWay && clock) {
+    updateMilkyWay(milkyWay, {
+      lst: currentLST,
+      latitude: observerLatitude,
+      T: getClockT(clock),
+      observerPosition: observerWorldPosition,
+      sunAltitude: getSunAltitude(sunMoon),
+    });
+  }
+
+  const moonPhase = sunMoon ? getMoonPhase(sunMoon) : null;
+  const atmosphereState =
+    atmosphere && sunMoon
+      ? updateAtmosphere(
+          atmosphere,
+          getSunAltitude(sunMoon),
+          sunMoon.sunData?.az ?? 180,
+          sunMoon.moonData?.alt ?? -90,
+          moonPhase?.illuminatedFraction ?? 0,
+          observerWorldPosition
+        )
+      : null;
+
+  const fogState = atmosphereState
+    ? updateWorldFog(worldFog, atmosphereState.ambientLevel, spawnState?.mode ?? 'land')
+    : worldFog?.state ?? null;
+
+  if (starField && sunMoon) {
+    updateStarVisibility(starField, getSunAltitude(sunMoon));
+  }
+
+  if (sunMoon) {
+    updateBloomForSky(getSunAltitude(sunMoon));
+  }
+
+  if (terrain && atmosphereState) {
+    updateTerrainLighting(terrain, atmosphereState.ambientLevel);
+  }
+
+  if (water && sunMoon) {
+    updateWater(water, timeSeconds, {
+      sunAltitude: getSunAltitude(sunMoon),
+      sunAzimuth: sunMoon.sunData?.az ?? 180,
+      moonAltitude: sunMoon.moonData?.alt ?? -90,
+      moonAzimuth: sunMoon.moonData?.az ?? 180,
+      moonIlluminatedFraction: moonPhase?.illuminatedFraction ?? 0,
+      ambientLevel: atmosphereState?.ambientLevel ?? 0.08,
+      fog: fogState,
+    });
+  }
+
+  if (trees && atmosphereState) {
+    updateTreesLighting(trees, atmosphereState.ambientLevel);
+  }
+
+  if (boat && atmosphereState) {
+    updateBoatLighting(boat, atmosphereState.ambientLevel);
+  }
+
+  if (starField && constellationLines && clock) {
+    updateConstellationPositions(constellationLines, starField, getSunAltitude(sunMoon));
+    updateConstellationVisibility(constellationLines);
+  }
+
+  if (hud && clock) {
+    updateHud(hud, {
+      jd: getClockJD(clock),
+      gregorian: getClockGregorian(clock),
+      gmst: getClockGMST(clock),
+      lst: currentLST,
+      latitude: observerLatitude,
+      longitude: observerLongitude,
+      speedMultiplier: getClockSpeed(clock),
+      paused: isClockPaused(clock),
+      fps,
+      spawnModeLabel: getSpawnModeLabel(),
+      planetLines: formatPlanetHudLines(),
+      sunMoonLines: formatSunMoonHudLines(),
+    });
+  }
+
+  if (timeControls && clock) {
+    updateTimeControls(timeControls, {
+      paused: isClockPaused(clock),
+      speedMultiplier: getClockSpeed(clock),
+    });
+  }
+
+  if (inputPanel && clock) {
+    updateInputPanel(inputPanel, {
+      latitude: observerLatitude,
+      longitude: observerLongitude,
+      gregorian: getClockGregorian(clock),
+    });
+  }
+
+  updateCompass(player?.yaw ?? camera.rotation.y);
+
+  if (labels && starField) {
+    updateLabels(labels, {
+      starField,
+      camera,
+    });
+  }
+}
+
+function applyObserverSettings({ latitude, longitude, jd }) {
+  observerLatitude = latitude;
+  observerLongitude = longitude;
+  setClockJD(clock, jd);
+  currentLST = localSiderealTime(getClockGMST(clock), observerLongitude);
+  buildWorldForCurrentSpawn();
+  syncSceneState((lastFrameTime ?? 0) * 0.001);
 }
 
 function cycleSpawnModeOverride() {
@@ -408,52 +588,8 @@ function cycleSpawnModeOverride() {
   buildWorldForCurrentSpawn();
 }
 
-function initializeLookControls() {
-  updateObserverWorldPosition();
-  const initialTarget = initialLookTarget.clone().sub(observerWorldPosition).normalize();
-  lookState.pitch = Math.asin(clamp(initialTarget.y, -1, 1));
-  lookState.yaw = Math.atan2(initialTarget.x, initialTarget.z);
-  updateCameraLookDirection();
-
-  renderer.domElement.addEventListener('pointerdown', (event) => {
-    if (event.button !== 0) {
-      return;
-    }
-
-    lookState.dragging = true;
-    renderer.domElement.setPointerCapture(event.pointerId);
-  });
-
-  renderer.domElement.addEventListener('pointermove', (event) => {
-    if (!lookState.dragging) {
-      return;
-    }
-
-    lookState.yaw -= event.movementX * lookState.sensitivity;
-    lookState.pitch = clamp(
-      lookState.pitch - event.movementY * lookState.sensitivity,
-      -Math.PI / 2 + 0.02,
-      Math.PI / 2 - 0.02
-    );
-    updateCameraLookDirection();
-  });
-
-  const endDrag = (event) => {
-    if (lookState.dragging) {
-      lookState.dragging = false;
-    }
-
-    if (renderer.domElement.hasPointerCapture(event.pointerId)) {
-      renderer.domElement.releasePointerCapture(event.pointerId);
-    }
-  };
-
-  renderer.domElement.addEventListener('pointerup', endDrag);
-  renderer.domElement.addEventListener('pointercancel', endDrag);
-}
-
 function updateBloomForSky(sunAltitude) {
-  const nightBlend = starVisibilityForSunAltitude(sunAltitude);
+  const nightBlend = computeAttenuation(90, sunAltitude, 'stars').brightness;
 
   if (nightBlend <= 0.001) {
     bloomPass.strength = 0;
@@ -476,17 +612,64 @@ async function init() {
   landMask = loadedLandMask;
   starField = createStarField(scene, starCatalog);
   planets = createPlanets(scene);
+  milkyWay = await createMilkyWay(scene);
   sunMoon = createSunMoon(scene);
   atmosphere = createAtmosphere(scene);
   worldFog = createWorldFog(scene);
+  player = createPlayerCamera(camera, renderer.domElement);
   buildWorldForCurrentSpawn();
 
   polarisMarker = createPolarisMarker(scene, starField);
   constellationLines = createConstellationLines(scene, constellationData, starCatalog);
   hud = createHud();
   debugPanel = createDebugPanel();
+  compass = createCompass();
+  labels = createLabels({ starField, planets, sunMoon });
   clock = createClock(J2000_JD);
-  timeControls = createTimeControls({ onJump: jumpClock });
+  inputPanel = createInputPanel({
+    onSubmit: ({ latitude, longitude, date, close }) => {
+      try {
+        const parsedLatitude = Number.parseFloat(latitude);
+        const parsedLongitude = Number.parseFloat(longitude);
+
+        if (!Number.isFinite(parsedLatitude) || parsedLatitude < -90 || parsedLatitude > 90) {
+          throw new Error(`Latitude must be between -90 and 90. Received "${latitude}".`);
+        }
+
+        if (!Number.isFinite(parsedLongitude) || parsedLongitude < -180 || parsedLongitude > 180) {
+          throw new Error(`Longitude must be between -180 and 180. Received "${longitude}".`);
+        }
+
+        const parsedDate = parseDateInput(date);
+        applyObserverSettings({
+          latitude: parsedLatitude,
+          longitude: parsedLongitude,
+          jd: julianDate(parsedDate.year, parsedDate.month, parsedDate.day, 0),
+        });
+        close?.();
+      } catch (error) {
+        console.error(error);
+      }
+    },
+  });
+  timeControls = createTimeControls({
+    onJump: jumpClock,
+    onTogglePause: () => {
+      if (!clock) {
+        return;
+      }
+
+      setClockPaused(clock, !isClockPaused(clock));
+    },
+    onSpeedChange: (speed) => {
+      if (!clock) {
+        return;
+      }
+
+      const sign = Math.sign(getClockSpeed(clock)) || 1;
+      setClockSpeed(clock, sign * speed);
+    },
+  });
 
   const jd = julianDate(2000, 1, 1, 12);
 
@@ -494,87 +677,18 @@ async function init() {
     throw new Error(`Unexpected J2000 JD: received ${jd}`);
   }
 
-  currentLST = localSiderealTime(getClockGMST(clock), OBSERVER_LONGITUDE);
-  initializeLookControls();
+  currentLST = localSiderealTime(getClockGMST(clock), observerLongitude);
   updateObserverWorldPosition();
-
-  updateStarPositions(starField, currentLST, OBSERVER_LATITUDE, 0, observerWorldPosition);
-  updateSunMoon(
-    sunMoon,
-    getClockJD(clock),
-    currentLST,
-    OBSERVER_LATITUDE,
-    OBSERVER_LONGITUDE,
-    camera,
-    observerWorldPosition
-  );
-  updatePlanetPositions(
-    planets,
-    getClockJD(clock),
-    currentLST,
-    OBSERVER_LATITUDE,
-    OBSERVER_LONGITUDE,
-    camera,
-    observerWorldPosition,
-    getSunAltitude(sunMoon)
-  );
-  const initialMoonPhase = getMoonPhase(sunMoon);
-  const initialAtmosphereState = updateAtmosphere(
-    atmosphere,
-    getSunAltitude(sunMoon),
-    sunMoon.sunData?.az ?? 180,
-    sunMoon.moonData?.alt ?? -90,
-    initialMoonPhase?.illuminatedFraction ?? 0,
-    observerWorldPosition
-  );
-  const initialFogState = updateWorldFog(worldFog, initialAtmosphereState.ambientLevel, spawnState.mode);
-  updateStarVisibility(starField, getSunAltitude(sunMoon));
-  updateBloomForSky(getSunAltitude(sunMoon));
-  if (terrain) {
-    updateTerrainLighting(terrain, initialAtmosphereState.ambientLevel);
-  }
-  updateWater(water, 0, {
-    sunAltitude: getSunAltitude(sunMoon),
-    sunAzimuth: sunMoon.sunData?.az ?? 180,
-    moonAltitude: sunMoon.moonData?.alt ?? -90,
-    moonAzimuth: sunMoon.moonData?.az ?? 180,
-    moonIlluminatedFraction: initialMoonPhase?.illuminatedFraction ?? 0,
-    ambientLevel: initialAtmosphereState.ambientLevel,
-    fog: initialFogState,
-  });
-  if (trees) {
-    updateTreesLighting(trees, initialAtmosphereState.ambientLevel);
-  }
-  if (boat) {
-    updateBoatLighting(boat, initialAtmosphereState.ambientLevel);
-  }
-  updatePolarisMarker(polarisMarker, starField);
-  updateConstellationPositions(constellationLines, starField, currentLST, OBSERVER_LATITUDE, 0);
-  updateConstellationVisibility(constellationLines, initialAtmosphereState.starVisibility);
-  updateHud(hud, {
-    jd: getClockJD(clock),
-    gregorian: getClockGregorian(clock),
-    gmst: getClockGMST(clock),
-    lst: currentLST,
-    latitude: OBSERVER_LATITUDE,
-    longitude: OBSERVER_LONGITUDE,
-    speedMultiplier: getClockSpeed(clock),
-    paused: isClockPaused(clock),
-    fps: 0,
-    spawnModeLabel: getSpawnModeLabel(),
-    planetLines: formatPlanetHudLines(),
-    sunMoonLines: formatSunMoonHudLines(),
-  });
+  lookPlayerAt(player, observerWorldPosition, initialLookTarget);
+  syncSceneState(0);
 }
 
 window.addEventListener('keydown', (event) => {
-  if (event.code === 'Space' && clock) {
-    event.preventDefault();
-    setClockPaused(clock, !isClockPaused(clock));
+  if (isEditableTarget(event.target) && event.code !== 'Escape') {
     return;
   }
 
-  if (event.code === 'Minus' || event.code === 'KeyA') {
+  if (event.code === 'Minus') {
     if (!clock) {
       return;
     }
@@ -583,7 +697,7 @@ window.addEventListener('keydown', (event) => {
     return;
   }
 
-  if (event.code === 'KeyH' && hud) {
+  if ((event.code === 'KeyH' || event.code === 'Digit9') && hud) {
     const visible = toggleHud(hud);
     console.info(`HUD ${visible ? 'shown' : 'hidden'}.`);
     return;
@@ -603,12 +717,6 @@ window.addEventListener('keydown', (event) => {
 
   if (event.code === 'KeyO' && landMask) {
     cycleSpawnModeOverride();
-    return;
-  }
-
-  if (SPEED_PRESETS[event.code] && clock) {
-    const sign = Math.sign(getClockSpeed(clock)) || 1;
-    setClockSpeed(clock, sign * SPEED_PRESETS[event.code]);
     return;
   }
 
@@ -645,125 +753,22 @@ function animate(frameTime) {
 
   if (clock) {
     tickClock(clock, realDeltaSeconds);
-    currentLST = localSiderealTime(getClockGMST(clock), OBSERVER_LONGITUDE);
+    currentLST = localSiderealTime(getClockGMST(clock), observerLongitude);
   }
 
   if (boat && spawnState?.mode === 'ocean') {
     updateBoatMotion(boat, safeFrameTime * 0.001);
   }
 
-  updateObserverWorldPosition();
-
-  if (starField && clock) {
-    updateStarPositions(starField, currentLST, OBSERVER_LATITUDE, getClockT(clock), observerWorldPosition);
-    updatePolarisMarker(polarisMarker, starField);
-  }
-
-  if (sunMoon && clock) {
-    updateSunMoon(
-      sunMoon,
-      getClockJD(clock),
-      currentLST,
-      OBSERVER_LATITUDE,
-      OBSERVER_LONGITUDE,
-      camera,
-      observerWorldPosition
-    );
-  }
-
-  if (planets && clock) {
-    updatePlanetPositions(
-      planets,
-      getClockJD(clock),
-      currentLST,
-      OBSERVER_LATITUDE,
-      OBSERVER_LONGITUDE,
-      camera,
-      observerWorldPosition,
-      getSunAltitude(sunMoon)
-    );
-  }
-
-  let atmosphereState = null;
-  const moonPhase = sunMoon ? getMoonPhase(sunMoon) : null;
-
-  if (atmosphere && sunMoon) {
-    atmosphereState = updateAtmosphere(
-      atmosphere,
-      getSunAltitude(sunMoon),
-      sunMoon.sunData?.az ?? 180,
-      sunMoon.moonData?.alt ?? -90,
-      moonPhase?.illuminatedFraction ?? 0,
-      observerWorldPosition
-    );
-  }
-
-  const fogState = atmosphereState
-    ? updateWorldFog(worldFog, atmosphereState.ambientLevel, spawnState?.mode ?? 'land')
-    : worldFog?.state ?? null;
-
-  if (starField && sunMoon) {
-    updateStarVisibility(starField, getSunAltitude(sunMoon));
-  }
-
-  if (sunMoon) {
-    updateBloomForSky(getSunAltitude(sunMoon));
-  }
-
-  if (terrain && atmosphereState) {
-    updateTerrainLighting(terrain, atmosphereState.ambientLevel);
-  }
-
-  if (water && sunMoon) {
-    updateWater(water, safeFrameTime * 0.001, {
-      sunAltitude: getSunAltitude(sunMoon),
-      sunAzimuth: sunMoon.sunData?.az ?? 180,
-      moonAltitude: sunMoon.moonData?.alt ?? -90,
-      moonAzimuth: sunMoon.moonData?.az ?? 180,
-      moonIlluminatedFraction: moonPhase?.illuminatedFraction ?? 0,
-      ambientLevel: atmosphereState?.ambientLevel ?? 0.08,
-      fog: fogState,
+  if (player && spawnState) {
+    updatePlayer(player, {
+      terrain,
+      spawnState,
+      deltaTime: realDeltaSeconds,
     });
   }
 
-  if (trees && atmosphereState) {
-    updateTreesLighting(trees, atmosphereState.ambientLevel);
-  }
-
-  if (boat && atmosphereState) {
-    updateBoatLighting(boat, atmosphereState.ambientLevel);
-  }
-
-  if (starField && constellationLines && clock) {
-    updateConstellationPositions(
-      constellationLines,
-      starField,
-      currentLST,
-      OBSERVER_LATITUDE,
-      getClockT(clock)
-    );
-    updateConstellationVisibility(
-      constellationLines,
-      atmosphereState?.starVisibility ?? starVisibilityForSunAltitude(getSunAltitude(sunMoon))
-    );
-  }
-
-  if (hud && clock) {
-    updateHud(hud, {
-      jd: getClockJD(clock),
-      gregorian: getClockGregorian(clock),
-      gmst: getClockGMST(clock),
-      lst: currentLST,
-      latitude: OBSERVER_LATITUDE,
-      longitude: OBSERVER_LONGITUDE,
-      speedMultiplier: getClockSpeed(clock),
-      paused: isClockPaused(clock),
-      fps,
-      spawnModeLabel: getSpawnModeLabel(),
-      planetLines: formatPlanetHudLines(),
-      sunMoonLines: formatSunMoonHudLines(),
-    });
-  }
+  syncSceneState(safeFrameTime * 0.001);
 
   if (ENABLE_BLOOM) {
     composer.render();

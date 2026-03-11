@@ -1,8 +1,8 @@
 import * as THREE from 'three';
 import * as Astronomy from 'astronomy-engine';
 
+import { computeAttenuation } from './attenuation.js';
 import { equatorialToHorizontal, horizontalToCartesian } from './coordinates.js';
-import { celestialVisibilityForSunAltitude } from './sun-moon.js';
 import { tuning } from '../ui/debug-panel.js';
 
 const PLANET_RADIUS = 1000;
@@ -104,6 +104,8 @@ export function createPlanets(scene) {
     return {
       ...config,
       sprite,
+      baseColor: new THREE.Color(config.color),
+      tintColor: new THREE.Color(1, 1, 1),
       label: createLabel(labelRoot, config.name),
       data: null,
     };
@@ -135,7 +137,6 @@ export function updatePlanetPositions(
   planets.observer.height = 0;
 
   const time = jdToAstroTimeDays(jd);
-  const visibility = celestialVisibilityForSunAltitude(sunAltitude);
 
   for (const planet of planets.bodies) {
     const equatorial = Astronomy.Equator(planet.body, time, planets.observer, true, true);
@@ -147,10 +148,13 @@ export function updatePlanetPositions(
     planet.sprite.position
       .set(cartesian.x, cartesian.y, cartesian.z)
       .add(planets.observerPosition);
+    const attenuation = computeAttenuation(horizontal.alt, sunAltitude, 'planets');
     planet.sprite.scale.setScalar(planet.size * tuning.planets.spriteSize);
-    planet.sprite.material.opacity = visibility;
+    planet.tintColor.setRGB(attenuation.tint.r, attenuation.tint.g, attenuation.tint.b);
+    planet.sprite.material.color.copy(planet.baseColor).multiply(planet.tintColor);
+    planet.sprite.material.opacity = attenuation.brightness;
     planet.label.style.fontSize = `${tuning.planets.labelSize}px`;
-    planet.label.style.opacity = String(visibility);
+    planet.label.style.opacity = String(attenuation.brightness);
 
     updateLabelPosition(planet.label, planet.sprite.position, camera);
 

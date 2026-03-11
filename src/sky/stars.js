@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 
+import { computeAttenuation } from './attenuation.js';
 import { equatorialToHorizontal, horizontalToCartesian, precessRADec } from './coordinates.js';
 import { tuning } from '../ui/debug-panel.js';
 
@@ -20,15 +21,6 @@ const COLOR_STOPS = [
 
 function clamp(value, minimum, maximum) {
   return Math.min(Math.max(value, minimum), maximum);
-}
-
-function smoothstep(edge0, edge1, value) {
-  const t = clamp((value - edge0) / (edge1 - edge0), 0, 1);
-  return t * t * (3 - 2 * t);
-}
-
-export function starVisibilityForSunAltitude(sunAltitude) {
-  return 1 - smoothstep(-18, -6, sunAltitude);
 }
 
 export function colorForBV(bv) {
@@ -104,7 +96,7 @@ export function createStarField(scene, starData) {
 
     return {
       ...star,
-      color: color.multiplyScalar(brightness),
+      baseColor: color.multiplyScalar(brightness),
     };
   });
 
@@ -114,7 +106,7 @@ export function createStarField(scene, starData) {
   scene.add(mesh);
 
   for (let index = 0; index < stars.length; index += 1) {
-    mesh.setColorAt(index, stars[index].color);
+    mesh.setColorAt(index, stars[index].baseColor);
   }
 
   if (mesh.instanceColor) {
@@ -132,6 +124,9 @@ export function createStarField(scene, starData) {
     observerPosition: new THREE.Vector3(),
     dummy: new THREE.Object3D(),
     renderedCount: 0,
+    visibleCount: 0,
+    tintColor: new THREE.Color(1, 1, 1),
+    scratchColor: new THREE.Color(),
   };
 }
 
@@ -183,9 +178,35 @@ export function updateStarPositions(starField, lst, latitude, T, observerPositio
 }
 
 export function updateStarVisibility(starField, sunAltitude) {
-  const visibility = starVisibilityForSunAltitude(sunAltitude);
-  starField.mesh.visible = visibility > 0.002;
-  starField.mesh.material.opacity = visibility;
+  let visibleCount = 0;
+
+  for (let index = 0; index < starField.stars.length; index += 1) {
+    const star = starField.stars[index];
+
+    if (Number.isFinite(star.vmag) && star.vmag > tuning.stars.limitingMagnitude) {
+      starField.mesh.setColorAt(index, starField.scratchColor.setRGB(0, 0, 0));
+      continue;
+    }
+
+    const relativeY = (starField.positions[index].y - starField.observerPosition.y) / starField.radius;
+    const altitude = Math.asin(clamp(relativeY, -1, 1)) * THREE.MathUtils.RAD2DEG;
+    const attenuation = computeAttenuation(altitude, sunAltitude, 'stars');
+
+    starField.tintColor.setRGB(attenuation.tint.r, attenuation.tint.g, attenuation.tint.b);
+    starField.mesh.setColorAt(
+      index,
+      starField.scratchColor.copy(star.baseColor).multiply(starField.tintColor).multiplyScalar(attenuation.brightness)
+    );
+
+    if (attenuation.brightness > 0.002) {
+      visibleCount += 1;
+    }
+  }
+
+  starField.mesh.instanceColor.needsUpdate = true;
+  starField.mesh.visible = visibleCount > 0;
+  starField.mesh.material.opacity = 1;
+  starField.visibleCount = visibleCount;
 }
 
 export function setStarFieldVisible(starField, visible) {

@@ -25,12 +25,7 @@ implemented now:
 - temporary drag-look inspection camera (not final first-person controls)
 
 still missing for MVP:
-- water
-- land/ocean mask and spawn logic
-- true first-person movement / collision
-- location/date input UI
-- hover/click labels
-- final polish and performance pass
+- performance check on mid-range hardware
 
 ---
 
@@ -125,43 +120,43 @@ each milestone is independently testable. verify before moving to the next.
 - **done when:** sparse pine trees dot the hills. you can walk to a clearing and see horizon-to-horizon sky. tree silhouettes frame the stars.
 
 ### milestone 12: water
-- [ ] flat plane at fixed y-level (y = 0, terrain above)
-- [ ] vertex shader: gentle sine-wave ripple displacement
-- [ ] fragment shader: sample sky color in reflected direction (cheap fake reflection), darken
-- [ ] boat spawn: when land-mask says ocean, spawn on a small flat platform at water level with gentle bob
+- [x] flat plane at fixed y-level (y = 0, terrain above)
+- [x] vertex shader: gentle sine-wave ripple displacement
+- [x] fragment shader: sample sky color in reflected direction (cheap fake reflection), darken
+- [x] boat spawn: when land-mask says ocean, spawn on a small flat platform at water level with gentle bob
 - **done when:** lakes/seas appear in terrain low points. at night, smeared star reflections visible in water. ocean spawning places you on a simple boat.
 
 ### milestone 13: land/ocean mask
-- [ ] obtain natural earth 1:110m land polygon, rasterize to 1024×512 equirectangular PNG
-- [ ] place in `public/data/land-mask.png`
-- [ ] `src/world/land-mask.js`: load texture, sample at (lat, lon) → land or ocean
-- [ ] spawn logic: land → spawn on terrain. ocean → spawn on boat.
+- [x] obtain natural earth 1:110m land polygon, rasterize to 1024×512 equirectangular PNG
+- [x] place in `public/data/land-mask.png`
+- [x] `src/world/land-mask.js`: load texture, sample at (lat, lon) → land or ocean
+- [x] spawn logic: land → spawn on terrain. ocean → spawn on boat.
 - **done when:** entering coordinates in the pacific spawns you on a boat. entering paris spawns you on land.
 
 ### milestone 14: first-person controls
-- [ ] replace orbit controls with pointer lock + WASD first-person camera
-- [ ] basic ground collision: camera stays at fixed height above terrain
-- [ ] smooth movement, mouse look with capped pitch
+- [x] replace orbit controls with first-person camera + WASD movement
+- [x] basic ground collision: camera stays at fixed height above terrain
+- [x] smooth movement, mouse look with capped pitch
 - **done when:** you can walk around the terrain in first person, look up at the sky, walk over hills.
 
 ### milestone 15: location/date input UI
-- [ ] implement `src/ui/input-panel.js`: text fields for latitude, longitude, date (gregorian)
-- [ ] "go" button teleports: regenerates terrain seed from coordinates, updates sky
-- [ ] display current date/time/location on HUD
-- [ ] time control buttons: play, pause, 1×/60×/360×/3600× speed
+- [x] implement `src/ui/input-panel.js`: text fields for latitude, longitude, date (gregorian)
+- [x] "go" button teleports: regenerates terrain seed from coordinates, updates sky
+- [x] display current date/time/location on HUD
+- [x] time control buttons: play, pause, 1×/60×/360×/3600× speed
 - **done when:** you can type coordinates and a date, press go, and the sky + terrain update. time controls work.
 
 ### milestone 16: star/planet labels
-- [ ] hover or click on a star/planet to see its name
-- [ ] use raycasting against the celestial sphere instances
-- [ ] label appears as HTML overlay or Three.js sprite near the object
+- [x] hover or click on a star/planet to see its name
+- [x] use screen-space projection against a labelable subset instead of raycasting the instanced star mesh
+- [x] label appears as HTML overlay or Three.js sprite near the object
 - **done when:** hovering over sirius shows "Sirius", hovering over jupiter shows "Jupiter".
 
 ### milestone 17: polish pass
-- [ ] tune star sizes, bloom intensity, sky colors
-- [ ] tune terrain amplitude, tree density, water reflectivity
-- [ ] tune fog distance, horizon haze
-- [ ] add milky way as a static textured band (equirectangular image mapped to the celestial sphere)
+- [x] tune star sizes, bloom intensity, sky colors
+- [x] tune terrain amplitude, tree density, water reflectivity
+- [x] tune fog distance, horizon haze
+- [x] add milky way as a static textured band (equirectangular image mapped to the celestial sphere)
 - [ ] performance check: confirm 60fps on mid-range hardware with all systems active
 - **done when:** the game looks and feels good. screenshot-worthy night sky over pine-dotted hills.
 

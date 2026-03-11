@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { computeAttenuation } from './attenuation.js';
 import { tuning } from '../ui/debug-panel.js';
 
 const ATMOSPHERE_RADIUS = 4200;
@@ -33,10 +34,6 @@ function directionFromHorizontal(altitude, azimuth) {
   ).normalize();
 }
 
-function starVisibilityForSunAltitude(sunAltitude) {
-  return 1 - smoothstep(-18, -6, sunAltitude);
-}
-
 function lightingStateForSky(sunAltitude, moonAltitude, moonIlluminatedFraction) {
   const daylight = smoothstep(-10, 6, sunAltitude);
   const twilightAmount = clamp(
@@ -44,7 +41,7 @@ function lightingStateForSky(sunAltitude, moonAltitude, moonIlluminatedFraction)
     0,
     1
   );
-  const starVisibility = starVisibilityForSunAltitude(sunAltitude);
+  const starVisibility = computeAttenuation(90, sunAltitude, 'stars').brightness;
   const starAmbient = starVisibility * tuning.atmosphere.nighttimeAmbientGlow;
   const moonAmbient =
     starVisibility *

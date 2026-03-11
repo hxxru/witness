@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import * as Astronomy from 'astronomy-engine';
 
+import { computeAttenuation } from './attenuation.js';
 import { equatorialToHorizontal, horizontalToCartesian } from './coordinates.js';
 import { tuning } from '../ui/debug-panel.js';
 
@@ -9,11 +10,6 @@ const SKY_RADIUS = 1000;
 const LABEL_COLOR = '#F5E6C8';
 const DAY_MOON_COLOR = new THREE.Color(0.52, 0.54, 0.58);
 const NIGHT_MOON_COLOR = new THREE.Color(1.65, 1.62, 1.55);
-
-function smoothstep(edge0, edge1, value) {
-  const t = THREE.MathUtils.clamp((value - edge0) / (edge1 - edge0), 0, 1);
-  return t * t * (3 - 2 * t);
-}
 
 function createDiscTexture(colorStops) {
   const canvas = document.createElement('canvas');
@@ -143,11 +139,6 @@ function jdToAstroTimeDays(jd) {
   return jd - J2000_JD;
 }
 
-export function celestialVisibilityForSunAltitude(sunAltitude) {
-  const nightFactor = 1 - smoothstep(-4, 12, sunAltitude);
-  return THREE.MathUtils.lerp(tuning.sunMoon.daytimeDimming, 1, nightFactor);
-}
-
 export function createSunMoon(scene) {
   const labelRoot = createLabelRoot();
   const sunMaterial = new THREE.SpriteMaterial({
@@ -201,6 +192,9 @@ export function createSunMoon(scene) {
     moonMaterial,
     moonHaloMaterial,
     moonTexture,
+    tintColor: new THREE.Color(1, 1, 1),
+    baseMoonColor: new THREE.Color(),
+    baseHaloColor: new THREE.Color(),
     sunLabel: createLabel(labelRoot, 'Sun'),
     moonLabel: createLabel(labelRoot, 'Moon'),
     observer: new Astronomy.Observer(0, 0, 0),
@@ -212,24 +206,26 @@ export function createSunMoon(scene) {
   };
 }
 
-function updateMoonAppearance(sunMoon, sunAltitude, illuminatedFraction) {
-  const visibility = celestialVisibilityForSunAltitude(sunAltitude);
-  const nightFactor = 1 - smoothstep(-4, 12, sunAltitude);
+function updateMoonAppearance(sunMoon, sunAltitude, moonAltitude, illuminatedFraction) {
+  const attenuation = computeAttenuation(moonAltitude, sunAltitude, 'moon');
+  const nightFactor = 1 - THREE.MathUtils.smoothstep(sunAltitude, -4, 12);
   const phaseFactor = THREE.MathUtils.lerp(0.45, 1, THREE.MathUtils.clamp(illuminatedFraction, 0, 1));
+  sunMoon.tintColor.setRGB(attenuation.tint.r, attenuation.tint.g, attenuation.tint.b);
 
-  sunMoon.moonMaterial.opacity = visibility * phaseFactor;
-  sunMoon.moonMaterial.color.copy(
-    new THREE.Color().lerpColors(DAY_MOON_COLOR, NIGHT_MOON_COLOR, nightFactor)
-  );
+  sunMoon.baseMoonColor.lerpColors(DAY_MOON_COLOR, NIGHT_MOON_COLOR, nightFactor);
+  sunMoon.moonMaterial.opacity = attenuation.brightness * phaseFactor;
+  sunMoon.moonMaterial.color.copy(sunMoon.baseMoonColor).multiply(sunMoon.tintColor);
   sunMoon.sun.scale.setScalar(220 * tuning.sunMoon.sunDiscSize);
   sunMoon.moon.scale.setScalar(
     THREE.MathUtils.lerp(152, 188, nightFactor) * tuning.sunMoon.moonDiscSize
   );
   sunMoon.moonHaloMaterial.opacity =
-    tuning.sunMoon.nightHalo * nightFactor * THREE.MathUtils.clamp(illuminatedFraction, 0, 1);
-  sunMoon.moonHaloMaterial.color.copy(
-    new THREE.Color().lerpColors(DAY_MOON_COLOR, NIGHT_MOON_COLOR, nightFactor)
-  );
+    tuning.sunMoon.nightHalo *
+    attenuation.brightness *
+    nightFactor *
+    THREE.MathUtils.clamp(illuminatedFraction, 0, 1);
+  sunMoon.baseHaloColor.lerpColors(DAY_MOON_COLOR, NIGHT_MOON_COLOR, nightFactor);
+  sunMoon.moonHaloMaterial.color.copy(sunMoon.baseHaloColor).multiply(sunMoon.tintColor);
   sunMoon.moonHalo.scale.setScalar(
     THREE.MathUtils.lerp(250, 310, nightFactor) * tuning.sunMoon.moonDiscSize
   );
@@ -299,10 +295,12 @@ export function updateSunMoon(
     phaseDegrees,
   };
 
-  updateMoonAppearance(sunMoon, sunHorizontal.alt, illumination.phase_fraction);
+  updateMoonAppearance(sunMoon, sunHorizontal.alt, moonHorizontal.alt, illumination.phase_fraction);
 
   if (camera) {
-    const moonVisibility = celestialVisibilityForSunAltitude(sunHorizontal.alt) *
+    const moonAttenuation = computeAttenuation(moonHorizontal.alt, sunHorizontal.alt, 'moon');
+    const moonVisibility =
+      moonAttenuation.brightness *
       THREE.MathUtils.lerp(0.45, 1, THREE.MathUtils.clamp(illumination.phase_fraction, 0, 1));
     sunMoon.sunLabel.style.fontSize = `${tuning.planets.labelSize}px`;
     sunMoon.moonLabel.style.fontSize = `${tuning.planets.labelSize}px`;
