@@ -27,6 +27,97 @@ implemented now:
 still missing for MVP:
 - performance check on mid-range hardware
 
+## delivered MVP
+
+what shipped by the end of the MVP:
+
+### astronomy and sky simulation
+
+- a live celestial sphere driven by julian date, GMST, and local sidereal time
+- support for dates spanning deep past and future, including astronomical year numbering for BCE dates in the location/date input
+- star positions derived from catalog RA/Dec with precession applied before equatorial→horizontal conversion
+- star rendering with:
+  - B-V based color mapping
+  - magnitude-based apparent size scaling
+  - bloom for the brightest stars
+  - limiting-magnitude control
+  - atmospheric attenuation by both sun altitude and object altitude
+- the five naked-eye planets via `astronomy-engine`, rendered as distinct sprites with labels
+- sun and moon via `astronomy-engine`, including:
+  - topocentric moon placement
+  - moon phase texture shading
+  - stronger nighttime moon bloom / halo
+  - separate moonlight contribution to ambient world lighting
+- a Milky Way band using a J2000 equatorial panorama texture, aligned to the same celestial transform as the stars and faded near the horizon
+- processed Stellarium western constellation line data, cross-matched against the runtime star catalog and tolerant of missing HIP endpoints
+- hover labels for a screen-space labelable subset of bright named stars, plus planets, sun, and moon
+
+### atmospheric rendering and visibility model
+
+- a sky dome shader with day, twilight, and night gradients
+- sunrise and sunset color progression driven by sun altitude
+- a unified sky attenuation model that now handles:
+  - twilight/daytime fade for stars, Milky Way, planets, moon, and constellation lines
+  - horizon fade and below-horizon suppression
+  - airmass-based atmospheric extinction
+  - warm horizon reddening
+- nighttime ambient sky glow from stars
+- additional moon-driven ambient lift based on lunar altitude and phase
+- horizon haze and world fog that adapt to land vs ocean spawn contexts
+
+### world generation and spawn modes
+
+- procedural low-poly terrain built from simplex-noise displacement
+- terrain coloring by height and slope, modulated by ambient lighting
+- sparse instanced pine trees with clearings preserved for sky visibility
+- water as a shader-driven reflective plane with gentle ripple displacement
+- a rasterized natural-earth land/ocean mask used at runtime to determine spawn mode from latitude/longitude
+- two spawn environments:
+  - land: terrain, trees, inland water, ground-based walking
+  - ocean: open-water plane with a small wooden boat platform, bobbing motion, and no terrain generation
+
+### player movement and camera
+
+- first-person movement with WASD, jump, gravity, damping, and look sensitivity tuning
+- right-click drag camera look instead of pointer lock, so the cursor remains free for UI interaction
+- land movement that sticks the player to terrain height
+- ocean movement constrained to the bounds of the boat platform
+- boat bob/roll motion inherited by the camera while on ocean spawns
+- pitch-limited camera movement tuned for sky viewing without flipping
+
+### input, controls, and UI
+
+- HUD showing date, time, location, sidereal data, FPS, spawn mode, and body debug info
+- bottom-right time controls for:
+  - play / pause
+  - fixed jumps by week, month, and year
+  - continuous speed adjustment by slider
+- bottom-left location/date panel with:
+  - latitude input
+  - longitude input
+  - gregorian / astronomical-year date input
+  - instant teleport + world rebuild on submit
+- top-center compass strip with cardinal directions and live heading readout
+- debug tuning panel with live sliders for stars, bloom, planets, sun/moon, atmosphere, Milky Way, fog, trees, water, player movement, labels, and sky attenuation
+- keyboard toggles for HUD, debug panel, constellation lines, polaris marker, and spawn-mode override
+
+### rendering and interaction details
+
+- post-processing bloom integrated with the night-sky rendering
+- permanent labels for planets, sun, and moon
+- hover labels filtered so hidden/daytime stars do not produce false name popups
+- star-count feedback tied to the limiting-magnitude slider
+- ocean water with moon reflection and darker nighttime ocean treatment
+- world rebuild flow that updates terrain seed, spawn mode, observer location, and celestial state together when place/date changes
+
+### development and data pipeline delivered as part of MVP
+
+- preprocessing for the runtime star catalog
+- preprocessing for constellation data extraction
+- preprocessing for the natural-earth land mask
+- runtime loading for catalog / mask assets from `public/data`
+- milestone-driven architecture split across `src/sky`, `src/world`, `src/player`, `src/ui`, and `src/time`
+
 ---
 
 ## build order — milestones

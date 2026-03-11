@@ -568,6 +568,7 @@ function syncSceneState(timeSeconds = 0) {
     updateLabels(labels, {
       starField,
       camera,
+      sunAltitude: getSunAltitude(sunMoon),
     });
   }
 }

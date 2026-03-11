@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { computeAttenuation } from '../sky/attenuation.js';
 import { tuning } from './debug-panel.js';
 
 const NAMED_STAR_MAGNITUDE_LIMIT = 3;
@@ -13,6 +14,11 @@ function toScreenCoordinates(projected) {
     x: ((projected.x + 1) / 2) * window.innerWidth,
     y: ((-projected.y + 1) / 2) * window.innerHeight,
   };
+}
+
+function altitudeFromWorldPosition(position, observerPosition, radius) {
+  const relativeY = (position.y - observerPosition.y) / radius;
+  return Math.asin(THREE.MathUtils.clamp(relativeY, -1, 1)) * THREE.MathUtils.RAD2DEG;
 }
 
 export function createLabels({ starField, planets, sunMoon }) {
@@ -75,6 +81,8 @@ export function createLabels({ starField, planets, sunMoon }) {
       name: body.name,
       magnitude: null,
       getPosition: () => body.sprite.position,
+      getAltitude: () => body.data?.alt ?? -90,
+      profile: 'planets',
       permanentLabel: body.label,
     });
     permanentLabels.push(body.label);
@@ -85,12 +93,16 @@ export function createLabels({ starField, planets, sunMoon }) {
       name: 'Sun',
       magnitude: null,
       getPosition: () => sunMoon.sun.position,
+      getAltitude: () => sunMoon.sunData?.alt ?? -90,
+      profile: 'sun',
       permanentLabel: sunMoon.sunLabel,
     });
     bodyTargets.push({
       name: 'Moon',
       magnitude: null,
       getPosition: () => sunMoon.moon.position,
+      getAltitude: () => sunMoon.moonData?.alt ?? -90,
+      profile: 'moon',
       permanentLabel: sunMoon.moonLabel,
     });
     permanentLabels.push(sunMoon.sunLabel, sunMoon.moonLabel);
@@ -112,7 +124,7 @@ export function createLabels({ starField, planets, sunMoon }) {
   };
 }
 
-export function updateLabels(labels, { starField, camera }) {
+export function updateLabels(labels, { starField, camera, sunAltitude = -90 }) {
   if (!labels.mouse.active) {
     for (const label of labels.permanentLabels) {
       label.style.visibility = '';
@@ -127,6 +139,17 @@ export function updateLabels(labels, { starField, camera }) {
   for (const target of labels.starTargets) {
     const star = target.star;
     if (Number.isFinite(star.vmag) && star.vmag > tuning.stars.limitingMagnitude) {
+      continue;
+    }
+
+    const altitude = altitudeFromWorldPosition(
+      starField.positions[target.index],
+      starField.observerPosition,
+      starField.radius
+    );
+    const attenuation = computeAttenuation(altitude, sunAltitude, 'stars');
+
+    if (attenuation.brightness <= 0.01) {
       continue;
     }
 
@@ -147,6 +170,14 @@ export function updateLabels(labels, { starField, camera }) {
   }
 
   for (const target of labels.bodyTargets) {
+    if (target.profile !== 'sun') {
+      const attenuation = computeAttenuation(target.getAltitude(), sunAltitude, target.profile);
+
+      if (attenuation.brightness <= 0.01) {
+        continue;
+      }
+    }
+
     labels.projected.copy(target.getPosition()).project(camera);
     if (!isOnScreen(labels.projected)) {
       continue;
