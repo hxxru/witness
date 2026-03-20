@@ -12,9 +12,9 @@ the world is minimal — low-poly terrain, geometric trees, still water reflecti
 
 ## core philosophy
 
-**accuracy as wonder** the night sky is computed from real astronomical data and models — 100,000+ stars, five naked-eye planets, sun and moon driving a real day/night cycle. 
+the night sky is computed from real astronomical data and models — 100,000+ stars, five naked-eye planets, sun and moon driving a real day/night cycle. 
 
-**exploration as play** achievements reward witnessing astronomical events — some easy (watch a full moon rise), some requiring historical research (find tycho's supernova from hven island, november 1572), some demanding rare combinations. 
+achievements reward witnessing astronomical events — some easy (watch a full moon rise), some requiring historical research (find tycho's supernova from hven island, november 1572), some demanding rare combinations. 
 
 ## stack
 
